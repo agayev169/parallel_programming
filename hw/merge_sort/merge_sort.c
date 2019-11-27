@@ -11,13 +11,14 @@ void swap(int *a, int *b);
 int *mergesort(int *arr, size_t arr_size);
 
 int arr_max = 1000000;
+
 int main(int argc, char *argv[]) {
     srand(time(NULL));
 
-    size_t arr_size = 100000;
+    size_t arr_size_max = 20000;
 
-    int arr[arr_size];
-    for (size_t i = 0; i < arr_size; ++i) {
+    int arr[arr_size_max];
+    for (size_t i = 0; i < arr_size_max; ++i) {
         arr[i] = rand() % (arr_max + 1);
     }
 
@@ -36,35 +37,47 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    if (arr_size % proc_n != 0) {
+    if (arr_size_max % proc_n != 0) {
         if (rank == 0)
             fprintf(stderr, "Array size must be divisible by the number of processes\n");
         MPI_Finalize();
         exit(1);
     }
 
-    // Quick Sort
-    size_t proc_arr_size = arr_size / proc_n;
+    if (rank == 0) printf("proc_n,arr_size,time\n");
 
-    // printf("process #%d sorts elements from %lu to %lu\n", rank, proc_arr_size * rank, proc_arr_size * (rank + 1));
-    quicksort(arr + proc_arr_size * rank, proc_arr_size - 1);
+    for (size_t s = 100; s <= arr_size_max; s += 200) {
+        size_t arr_size = s;
 
-    // printf("process #%d results: ", rank);
-    // for (size_t i = rank * proc_arr_size; i < (rank + 1) * proc_arr_size; ++i) {
-    //     printf("%d ", arr[i]);
-    // }
-    // printf("\n");
+        double start = MPI_Wtime();
+        // Quick Sort
+        size_t proc_arr_size = arr_size / proc_n;
 
-    int *new_arr = mergesort(arr, arr_size);
+        // printf("process #%d sorts elements from %lu to %lu\n", rank, proc_arr_size * rank, proc_arr_size * (rank + 1));
+        quicksort(arr + proc_arr_size * rank, proc_arr_size - 1);
 
-    // if (rank == 0) {
-    //     for (size_t i = 0; i < arr_size; ++i) {
-    //         printf("%d ", new_arr[i]);
-    //     }
-    //     printf("\n");
-    // }
+        // printf("process #%d results: ", rank);
+        // for (size_t i = rank * proc_arr_size; i < (rank + 1) * proc_arr_size; ++i) {
+        //     printf("%d ", arr[i]);
+        // }
+        // printf("\n");
 
-    free(new_arr);
+        int *new_arr = mergesort(arr, arr_size);
+
+        // if (rank == 0) {
+        //     for (size_t i = 0; i < arr_size; ++i) {
+        //         printf("%d ", new_arr[i]);
+        //     }
+        //     printf("\n");
+        // }
+
+        free(new_arr);
+
+        double end = MPI_Wtime();
+
+        if (rank == 0)
+            printf("%d,%lu,%lf\n", proc_n, arr_size, end - start);
+    }
 
     MPI_Finalize();
 }
@@ -126,21 +139,8 @@ int *mergesort(int *arr, size_t arr_size) {
     int rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    // int new_arr[arr_size];
-
-    int *new_arr = malloc(arr_size * sizeof(int));
-
-    // printf("process #%d enters mergesort()\n", rank);
-
-    // if (rank == 0) {
-    //     printf("arr: ");
-    //     for (size_t i = 0; i < arr_size; ++i) {
-    //         printf("%d ", arr[i]);
-    //     }
-    //     printf("\n");
-    // }
-
     if (rank == 0) { // Merging
+        int *new_arr = malloc(arr_size * sizeof(int));
         size_t arr_size_proc = arr_size / proc_n;
         size_t indexes[proc_n]; // current index of each process
         size_t index = 0;       // current index
@@ -160,21 +160,18 @@ int *mergesort(int *arr, size_t arr_size) {
 
         while (1) {
             // Receive nums
+            if (indexes[0] < arr_size_proc) {
+                min_val = arr[indexes[0]];
+                min_val_proc = 0;
+                break_ = 0;
+            } else {
+                min_val = arr_max + 1;
+                min_val_proc = 0;
+                break_ = 1;
+            }
             for (size_t i = 1; i < (size_t) proc_n; ++i) {
-                if (indexes[0] < arr_size_proc) {
-                    min_val = arr[indexes[0]];
-                    min_val_proc = 0;
-                    break_ = 0;
-                }
-                else {
-                    min_val = arr_max + 1;
-                    min_val_proc = 0;
-                    break_ = 1;
-                }
-                if (indexes[i] < arr_size / proc_n) {
-                    // printf("process #%d tries to receive a value from process #%lu with tag %lu\n", rank, i, index);
+                if (indexes[i] < arr_size_proc) {
                     MPI_Recv(&val, 1, MPI_INT, i, index, MPI_COMM_WORLD, NULL);
-                    // printf("Received %d from process #%lu\n", val, i);
                     if (val <= min_val) {
                         min_val = val;
                         min_val_proc = i;
@@ -185,33 +182,24 @@ int *mergesort(int *arr, size_t arr_size) {
                     received[i] = 0;
                 }
             }
-
-            // printf("min_val: %d, process #%d\n", min_val, min_val_proc);
-            // swap(&arr[index++], &arr[min_val_proc * arr_size_proc + (indexes[min_val_proc]++)]);
-            // printf("swaped\n");
-            // printf("index: %lu\n", min_val_proc * arr_size_proc + indexes[min_val_proc]);
+            
             new_arr[index++] = min_val;
             ++indexes[min_val_proc];
-            // printf("sorted array: ");
-            // for (size_t i = 0; i < index; ++i) {
-            //     printf("%d ", new_arr[i]);
-            // }
-            // printf("\n");
 
             // Send response
             for (size_t i = 1; i < (size_t) proc_n; ++i) {
                 if (received[i]) {
                     if (min_val_proc == i) {
-                        // printf("sending 1 to process #%lu with tag %lu\n", i, index - 1);
                         MPI_Ssend(&one, 1, MPI_INT, i, index - 1, MPI_COMM_WORLD);
                     } else {
-                        // printf("sending 0 to process #%lu with tag %lu\n", i, index - 1);
                         MPI_Ssend(&zero, 1, MPI_INT, i, index - 1, MPI_COMM_WORLD);
                     }
                 }
             }
 
-            if (break_) break;
+            if (break_) {
+                return new_arr;
+            }
         }
     } else {
         size_t index = 0;
@@ -223,14 +211,11 @@ int *mergesort(int *arr, size_t arr_size) {
         size_t tag = 0;
 
         while (index < arr_size_proc) {
-            // printf("process #%d sends %d to process #0\n", rank, arr[begin + index]);
             MPI_Ssend(&arr[begin + index], 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
-            // printf("process #%d tries to receive change from process #0\n", rank);
             MPI_Recv(&change, 1, MPI_INT, 0, tag++, MPI_COMM_WORLD, NULL);
-            // printf("process #%d change: %d\n", rank, change);
             index += change;
         }
     }
 
-    return new_arr;
+    return malloc(1);
 }
